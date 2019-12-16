@@ -1,0 +1,7 @@
+venv
+[._]*.sw[a-p]
+.vscode
+.pytest_cache
+*.egg-info
+__pycache__
+game.json
