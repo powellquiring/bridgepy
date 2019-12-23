@@ -1,28 +1,63 @@
+"""
+Keep score in a game of bridge
+"""
 import click
 import collections
 import json
 import fastapi
 import enum
 import io
+from typing import (NamedTuple, List)
+import time
+import pathlib
 
 class Team(enum.Enum):
     WE = 0
     THEY = 1
+
 class Suit(enum.Enum):
     NOTRUMP = 'n'
     SPADE = "s"
     HEART = "h"
     DIAMOND = "d"
     CLUB = "c"
+
 class Honors(enum.IntEnum):
     H100 = 100
     H150 = 150
     NONE = 0
+
 class Double(enum.Enum):
     NONE = 1
     DOUBLE = 2
     REDOUBLE = 4
-Result = collections.namedtuple("Result", ["team", "bid", "suit", "over", "honors", "double"], defaults=(Honors.NONE, Double.NONE))
+
+class Result(NamedTuple):
+    """Result of playing a hand.  It is using the enums which can not be converted to json so the methods
+    to create a jsonable dictionary are provided"""
+    team: Team
+    bid: int
+    suit: Suit
+    over: int
+    honors: Honors = Honors.NONE
+    double: Double = Double.NONE
+    def to_json_dictionary(self) -> dict:
+        "Convert self to a jsonable dictionary"
+        d = self._asdict()
+        for k,v in Result.__annotations__.items():
+            if isinstance(v, enum.EnumMeta):
+                d[k] = d[k].value
+        return d
+    def from_json_dictionary(**hand_dict: dict) -> 'Result':
+        "Create a Result from a jsonable dictionary"
+        d = {}
+        for k,v in hand_dict.items():
+            enum_type = Result.__annotations__[k]
+            if isinstance(enum_type, enum.EnumMeta):
+                d[k] = enum_type(v)
+            else:
+                d[k] = v
+        return Result(**d)
 
 app = fastapi.FastAPI()
 hands = []
@@ -82,9 +117,41 @@ def bid_parse(bid: str) -> Result:
     return ret
 
 def score_print(hands):
-    games = score_hands(hands)
-    for game in games:
-        (we_above, they_above, we_below, they_below) = game
+    "Print the score for a set of hands by converting them to rubbers and printing the rubbers"
+    point_format = " {:3d} | {:3d}"
+    we_total = 0
+    they_total = 0
+    rs = rubbers(hands)
+    for r in rs:
+        click.echo('  We | They')
+        above_count = max(len(r.above[0]), len(r.above[1]))
+        for i in range(above_count - 1, -1, -1):
+            we = 0 if len(r.above[0]) <= i else r.above[0][i]
+            they = 0 if len(r.above[1]) <= i else r.above[1][i]
+            click.echo(point_format.format(we, they))
+        click.echo("-------------")
+        first_game = True
+        for game in r.games:
+            if first_game:
+                first_game = False
+            else:
+                click.echo("- - - - - - -")
+            score_count = max(len(game[0]), len(game[1]))
+            for i in range(0, score_count):
+                we = 0 if len(game[0]) <= i else game[0][i]
+                they = 0 if len(game[1]) <= i else game[1][i]
+                click.echo(point_format.format(we, they))
+        click.echo("-------------")
+        click.echo(point_format.format(r.total[0], r.total[1]))
+        we_total += r.total[0]
+        they_total += r.total[1]
+        click.echo()
+    if len(rs) > 1:
+        # print total for all the rubbers
+        click.echo("=================")
+        click.echo("== All Rubbers ==")
+        click.echo("=================")
+        click.echo(point_format.format(we_total, they_total))
 
 class Rubber:
     """
@@ -176,53 +243,94 @@ class Rubber:
             self.total[contract_loser] += set_points
         return self.complete()
 
-def Rubbers(results: []) -> []:
+def rubbers(results: List[Result]) -> []:
     rubber = Rubber()
     ret = [rubber]
     for result in results:
-        if not rubber.add(result):
-            rubber = Rubber
+        if rubber.add(result):
+            rubber = Rubber()
             ret.append(rubber)
     return ret
+
 def help_print():
     click.echo(cli.get_help(click.Context(cli)))
 
-def hands_read(f: io.FileIO):
-    if not f.read(1):
-        return []
-    return json.load(f)
-def hands_truncate_write(f: io.FileIO, hands):
-    hands = []
-    for hand in hands:
-        d = hand._asdict()
-        d["team"] = d["team"].value
-        d["suit"] = d["suit"].value
-        hands.append(d)
-    f.truncate()
-    json.dump(hands, f)
+def hands_to_json_file(f: io.FileIO, hands):
+    """write the hands array in json format to the file"""
+    json.dump([hand.to_json_dictionary() for hand in hands], f)
 
-def bid_file(f, bid):
-    if bid == "s":
-        click.echo("score")
+def hands_from_json_file(f: io.FileIO) -> []:
+    """Load a jso file and return the array of hands"""
+    out = json.load(f)
+    return [Result.from_json_dictionary(**hand_json) for hand_json in out]
+
+
+def bid_file(hands_path, hands, bid):
+    if bid == None:
+        score_print(hands)
+        return
     elif bid == "u":
-        click.echo("undo")
+        if len(hands) == 0:
+            return
+        hands.pop()
     else:
         tpl = bid_parse(bid)
         if tpl:
-            hands = hands_read(f)
             hands.append(tpl)
-            score_print(hands)
-            hands_truncate_write(f, hands)
         else:
             help_print()
+            return
+    with hands_path.open(mode="w") as f:
+        hands_to_json_file(f, hands)
+    score_print(hands)
+
+def new_game_file(dir_str: str) -> pathlib.Path:
+    file_name = time.strftime("%Y-%m-%d-%H-%M-%S") + ".json"
+    directory = pathlib.Path(dir_str)
+    file = directory / file_name
+    if file.exists():
+        raise FileExistsError()
+    file.write_text("[]")
+    return file
+    
+def existing_game_file(dir_str: str) -> pathlib.Path:
+    directory = pathlib.Path(dir_str)
+    paths = list(directory.glob("*-*-*-*-*-*.json"))
+    if len(paths) == 0:
+        raise FileNotFoundError()
+    paths.sort()
+    return paths[-1]
 
 # Command line calls cli
 @click.command()
-@click.option("-g", "--hands-file", default="hands.json", help="file name to store hands")
+@click.option("-d", "--directory", default=".", help="directory to store hands")
+@click.option("-n", "--new-game", is_flag=True, help="start a new game, this will create a new file to store the hands")
 @click.argument("bid", nargs=1, required=False)
-def cli(hands_file, bid):
-    """score a collection of bridge hands USAGE:
+def cli(directory, new_game, bid):
+    """
+    score a collection of bridge hands USAGE:
     bridgepy [options] [bid]
-    bid:  s (score), u (undo) or bid: w3sm3 - we 3 spade made 3, t2dd1 they 2 diamond down 1"""
-    with open(hands_file, mode="w") as f:
-        bid_file(f, bid)
+    bid -n; # start a new hand it will be named for the time
+    bid w3sm3; # we 3 spade made 3
+    bid t2dd1; # they 2 diamond down 1
+    """
+    run(directory, new_game, bid)
+
+def run(directory, new_game, bid):
+    hands_path = None
+    if new_game:
+        hands_path = new_game_file(directory)
+    else:
+        try:
+            hands_path = existing_game_file(directory)
+        except FileNotFoundError:
+            hands_path = new_game_file(directory)
+
+    try:
+        with hands_path.open(mode="r") as f:
+            hands = hands_from_json_file(f)
+    except Exception:
+        hands = []
+    bid_file(hands_path, hands, bid)
+
+#run(".", True, "w1sm1")

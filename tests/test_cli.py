@@ -47,10 +47,30 @@ def test_score():
     assert(r.total[Team.THEY.value] == 1640)
 
 
-#def test_cli():
-#    f = io.StringIO("")
-#    bid_file(f, "w3sm3")
-#    f.seek(0)
-#    result = json.load(f)
-#    expected = json.loads('[{"team": "w", "suit": "s", "bid": 3, "made": 3}]')
-#    assert(result == expected)
+def test_io():
+    f = io.StringIO("")
+    hands_to_json_file(f, [bid_parse("w3sm3"), bid_parse("w1nd1")])
+    f.seek(0)
+    hands = hands_from_json_file(f)
+    assert(len(hands) == 2)
+    assert(hands[0] == Result(Team.WE, 3, Suit.SPADE, 0, Honors.NONE, Double.NONE))
+    assert(hands[1] == Result(Team.WE, 1, Suit.NOTRUMP, -1, Honors.NONE, Double.NONE))
+
+from pathlib import Path
+import tempfile
+import time
+def test_file():
+    with tempfile.TemporaryDirectory() as dir:
+        found = True
+        try:
+            p = existing_game_file(dir)
+        except FileNotFoundError:
+            found = False
+        assert(not found)
+        p = new_game_file(dir)
+        p2 = existing_game_file(dir)
+        assert(p == p2)
+        time.sleep(1)
+        p3 = new_game_file(dir)
+        assert(p != p3)
+        assert(p3 == existing_game_file(dir))
