@@ -11,4 +11,6 @@ from .cli import (
     hands_from_json_file,
     new_game_file,
     existing_game_file,
+    read_hands,
+    rubbers,
 )

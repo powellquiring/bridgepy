@@ -4,7 +4,6 @@ Keep score in a game of bridge
 import click
 import collections
 import json
-import fastapi
 import enum
 import io
 from typing import (NamedTuple, List)
@@ -58,25 +57,6 @@ class Result(NamedTuple):
             else:
                 d[k] = v
         return Result(**d)
-
-app = fastapi.FastAPI()
-hands = []
-
-@app.post("/hand")
-async def new_hand():
-    global hands
-    hands.append({len(hands):"hands"})
-    return hands
-
-@app.get("/hands")
-async def get_hands():
-    global hands
-    return hands
-
-@app.get("/hand/{id}")
-async def get_hands(id: int):
-    global hands
-    return hands[id]
 
 def honors_double(s):
     if s == 'd':
@@ -264,6 +244,9 @@ def hands_from_json_file(f: io.FileIO) -> []:
     out = json.load(f)
     return [Result.from_json_dictionary(**hand_json) for hand_json in out]
 
+def read_hands(hands_path):
+    with hands_path.open(mode="r") as f:
+        return hands_from_json_file(f)
 
 def bid_file(hands_path, hands, bid):
     if bid == None:
@@ -301,6 +284,22 @@ def existing_game_file(dir_str: str) -> pathlib.Path:
     paths.sort()
     return paths[-1]
 
+def run(directory, new_game, bid):
+    hands_path = None
+    if new_game:
+        hands_path = new_game_file(directory)
+    else:
+        try:
+            hands_path = existing_game_file(directory)
+        except FileNotFoundError:
+            hands_path = new_game_file(directory)
+
+    try:
+        hands = read_hands(hands_path)
+    except Exception:
+        hands = []
+    bid_file(hands_path, hands, bid)
+
 # Command line calls cli
 @click.command()
 @click.option("-d", "--directory", default=".", help="directory to store hands")
@@ -315,22 +314,5 @@ def cli(directory, new_game, bid):
     bid t2dd1; # they 2 diamond down 1
     """
     run(directory, new_game, bid)
-
-def run(directory, new_game, bid):
-    hands_path = None
-    if new_game:
-        hands_path = new_game_file(directory)
-    else:
-        try:
-            hands_path = existing_game_file(directory)
-        except FileNotFoundError:
-            hands_path = new_game_file(directory)
-
-    try:
-        with hands_path.open(mode="r") as f:
-            hands = hands_from_json_file(f)
-    except Exception:
-        hands = []
-    bid_file(hands_path, hands, bid)
 
 #run(".", True, "w1sm1")
