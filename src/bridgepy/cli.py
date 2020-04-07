@@ -2,73 +2,33 @@
 Keep score in a game of bridge
 """
 import click
-import collections
 import json
+import collections
 import enum
-import io
-from typing import (NamedTuple, List)
-import time
-import pathlib
+from typing import List
+from bridgepy import *
 
-class Team(enum.Enum):
-    WE = 0
-    THEY = 1
+STORAGE_FILE = "file"
+STORAGE_COS = "cos"
+ROOT = "pfq-bridgepy"
+# COS_INSTANCE_ID="crn:v1:bluemix:public:cloud-object-storage:global:a/713c783d9a507a53135fe6793c37cc74:816ac7d3-10f7-4b06-a7bc-570da47b4c0b::"
+COS_INSTANCE_ID = "crn:v1:bluemix:public:cloud-object-storage:global:a/713c783d9a507a53135fe6793c37cc74:eefa2d30-edb6-4105-ac49-2a66ff0de075::"
+COS_SERVICE_ENDPOINT = "https://s3-api.us-geo.objectstorage.softlayer.net"
+ENV_PREFIX = "BRIDGEPY"
 
-class Suit(enum.Enum):
-    NOTRUMP = 'n'
-    SPADE = "s"
-    HEART = "h"
-    DIAMOND = "d"
-    CLUB = "c"
-
-class Honors(enum.IntEnum):
-    H100 = 100
-    H150 = 150
-    NONE = 0
-
-class Double(enum.Enum):
-    NONE = 1
-    DOUBLE = 2
-    REDOUBLE = 4
-
-class Result(NamedTuple):
-    """Result of playing a hand.  It is using the enums which can not be converted to json so the methods
-    to create a jsonable dictionary are provided"""
-    team: Team
-    bid: int
-    suit: Suit
-    over: int
-    honors: Honors = Honors.NONE
-    double: Double = Double.NONE
-    def to_json_dictionary(self) -> dict:
-        "Convert self to a jsonable dictionary"
-        d = self._asdict()
-        for k,v in Result.__annotations__.items():
-            if isinstance(v, enum.EnumMeta):
-                d[k] = d[k].value
-        return d
-    def from_json_dictionary(**hand_dict: dict) -> 'Result':
-        "Create a Result from a jsonable dictionary"
-        d = {}
-        for k,v in hand_dict.items():
-            enum_type = Result.__annotations__[k]
-            if isinstance(enum_type, enum.EnumMeta):
-                d[k] = enum_type(v)
-            else:
-                d[k] = v
-        return Result(**d)
 
 def honors_double(s):
-    if s == 'd':
+    if s == "d":
         return {"double": Double.DOUBLE}
-    elif s == 'r':
+    elif s == "r":
         return {"double": Double.REDOUBLE}
-    elif s == '0':
+    elif s == "0":
         return {"honors": Honors.H100}
-    elif s == '5':
+    elif s == "5":
         return {"honors": Honors.H150}
     else:
-        raise Exception('Honors or double must be d, r, 0, 5 but was', s)
+        raise Exception("Honors or double must be d, r, 0, 5 but was", s)
+
 
 def bid_parse(bid: str) -> Result:
     """
@@ -85,7 +45,7 @@ def bid_parse(bid: str) -> Result:
     w3sd1d0: WE, 3, SPADES, -1, honors 100, doubled
     w3sm3r: WE, 3, SPADES, 0, Redoubled
     """
-    team = Team.WE if bid[0] == 'w' else Team.THEY
+    team = Team.WE if bid[0] == "w" else Team.THEY
     bid_tricks = int(bid[1])
     suit = Suit(bid[2])
     made_or_down = bid[3]
@@ -96,42 +56,55 @@ def bid_parse(bid: str) -> Result:
         ret = ret._replace(**honors_double(bid[indx]))
     return ret
 
-def score_print(hands):
+
+def score_print(hands: List[Result]):
     "Print the score for a set of hands by converting them to rubbers and printing the rubbers"
+    click.echo(score_str(hands))
+
+
+def add_nl(s: str) -> str:
+    return s + "\n"
+
+
+def score_str(hands: List[Result]) -> str:
+    "generate a string score for a set of hands by converting them to rubbers and printing the rubbers"
+    ret = ""
     point_format = " {:3d} | {:3d}"
     we_total = 0
     they_total = 0
     rs = rubbers(hands)
     for r in rs:
-        click.echo('  We | They')
+        ret += add_nl("  We | They")
         above_count = max(len(r.above[0]), len(r.above[1]))
         for i in range(above_count - 1, -1, -1):
             we = 0 if len(r.above[0]) <= i else r.above[0][i]
             they = 0 if len(r.above[1]) <= i else r.above[1][i]
-            click.echo(point_format.format(we, they))
-        click.echo("-------------")
+            ret += add_nl(point_format.format(we, they))
+        ret += add_nl("-------------")
         first_game = True
         for game in r.games:
             if first_game:
                 first_game = False
             else:
-                click.echo("- - - - - - -")
+                ret += add_nl("- - - - - - -")
             score_count = max(len(game[0]), len(game[1]))
             for i in range(0, score_count):
                 we = 0 if len(game[0]) <= i else game[0][i]
                 they = 0 if len(game[1]) <= i else game[1][i]
-                click.echo(point_format.format(we, they))
-        click.echo("-------------")
-        click.echo(point_format.format(r.total[0], r.total[1]))
+                ret += add_nl(point_format.format(we, they))
+        ret += add_nl("-------------")
+        ret += add_nl(point_format.format(r.total[0], r.total[1]))
         we_total += r.total[0]
         they_total += r.total[1]
-        click.echo()
+        ret += add_nl("")
     if len(rs) > 1:
         # print total for all the rubbers
-        click.echo("=================")
-        click.echo("== All Rubbers ==")
-        click.echo("=================")
-        click.echo(point_format.format(we_total, they_total))
+        ret += add_nl("=================")
+        ret += add_nl("== All Rubbers ==")
+        ret += add_nl("=================")
+        ret += add_nl(point_format.format(we_total, they_total))
+    return ret
+
 
 class Rubber:
     """
@@ -155,13 +128,20 @@ class Rubber:
             ]
     totoal: [100, 90] # just a sum of everything
     """
+
     def __init__(self):
-        self.above = [[], []] # we and they list above the line
-        self.games = [[[], []]] # games below the line, list of games, each game has a list of contracts won for We and They
-        self.games_won = [0, 0] # we, they games won
-        self.total = [0, 0] # we and they totals
+        self.above = [[], []]  # we and they list above the line
+        self.games = [
+            [[], []]
+        ]  # games below the line, list of games, each game has a list of contracts won for We and They
+        self.games_won = [0, 0]  # we, they games won
+        self.total = [0, 0]  # we and they totals
+
     def complete(self):
-        return self.games_won[Team.WE.value] == 2 or self.games_won[Team.THEY.value] == 2
+        return (
+            self.games_won[Team.WE.value] == 2 or self.games_won[Team.THEY.value] == 2
+        )
+
     def add(self, result: Result) -> bool:
         """add the result to the rubber return True if the rubber is now complete"""
         if self.complete():
@@ -169,10 +149,12 @@ class Rubber:
         contract_winner = result.team.value
         contract_loser = 1 - contract_winner
         vulnerable = self.games_won[contract_winner] == 1
-        if result.over >= 0: # made contract
-            above_points = [] # apoints earned above the line for this hand
+        if result.over >= 0:  # made contract
+            above_points = []  # apoints earned above the line for this hand
             last_game = self.games[len(self.games) - 1]
-            trick_value = 20 if result.suit == Suit.DIAMOND or result.suit == Suit.CLUB else 30
+            trick_value = (
+                20 if result.suit == Suit.DIAMOND or result.suit == Suit.CLUB else 30
+            )
             under_points = trick_value * result.bid * result.double.value
             under_points += 10 if result.suit == Suit.NOTRUMP else 0
             last_game[contract_winner].append(under_points)
@@ -181,7 +163,12 @@ class Rubber:
                 if result.double == Double.NONE:
                     over_trick_points = trick_value * result.over * result.double.value
                 else:
-                    over_trick_points = 50 * result.over * result.double.value * (2 if vulnerable else 1)
+                    over_trick_points = (
+                        50
+                        * result.over
+                        * result.double.value
+                        * (2 if vulnerable else 1)
+                    )
                 above_points.append(over_trick_points)
             slam_bonus = 0
             if result.bid == 6:
@@ -191,28 +178,61 @@ class Rubber:
             if slam_bonus:
                 above_points.append(slam_bonus)
             if result.double != Double.NONE:
-                above_points.append(50 if result.double == Double.DOUBLE else 100) # insult
+                above_points.append(
+                    50 if result.double == Double.DOUBLE else 100
+                )  # insult
             if result.honors != Honors.NONE:
                 above_points.append(result.honors.value)
             if sum(last_game[contract_winner]) >= 100:
-                self.games_won[contract_winner] += 1 # keep track of games won for each team
+                self.games_won[
+                    contract_winner
+                ] += 1  # keep track of games won for each team
                 if self.complete():
                     rubber_bonus = 700 if self.games_won[contract_loser] == 0 else 500
                     above_points.append(rubber_bonus)
                 else:
-                    self.games.append([[],[]]) # add a new game
+                    self.games.append([[], []])  # add a new game
 
             self.above[contract_winner].extend(above_points)
             self.total[contract_winner] += under_points
             self.total[contract_winner] += sum(above_points)
-        else: # set
+        else:  # set
             #          vu   vd      vr   nu  nd      nr
-            trick1 =  [100, 200, 0, 400, 50, 100, 0, 200] # vulnerable undoubled, doubled, redoubled, not vulnerable, ...
-            trick23 = [100, 300, 0, 600, 50, 200, 0, 400] # vulnerable undoubled, doubled, redoubled, not vulnerable, ...
-            trick4 =  [100, 300, 0, 600, 50, 300, 0, 600] # vulnerable undoubled, doubled, redoubled, not vulnerable, ...
+            trick1 = [
+                100,
+                200,
+                0,
+                400,
+                50,
+                100,
+                0,
+                200,
+            ]  # vulnerable undoubled, doubled, redoubled, not vulnerable, ...
+            trick23 = [
+                100,
+                300,
+                0,
+                600,
+                50,
+                200,
+                0,
+                400,
+            ]  # vulnerable undoubled, doubled, redoubled, not vulnerable, ...
+            trick4 = [
+                100,
+                300,
+                0,
+                600,
+                50,
+                300,
+                0,
+                600,
+            ]  # vulnerable undoubled, doubled, redoubled, not vulnerable, ...
             set_tricks = -result.over
-            point_index = 4 * (0 if vulnerable else 1) + result.double.value - 1 # double value is 1, 2, 4
-            set_points = trick1[point_index] # first set trick
+            point_index = (
+                4 * (0 if vulnerable else 1) + result.double.value - 1
+            )  # double value is 1, 2, 4
+            set_points = trick1[point_index]  # first set trick
             set_tricks -= 1
             for i in range(0, set_tricks if set_tricks <= 2 else 2):
                 set_points += trick23[point_index]
@@ -223,7 +243,8 @@ class Rubber:
             self.total[contract_loser] += set_points
         return self.complete()
 
-def rubbers(results: List[Result]) -> []:
+
+def rubbers(results: List[Result]) -> List[Rubber]:
     rubber = Rubber()
     ret = [rubber]
     for result in results:
@@ -232,23 +253,12 @@ def rubbers(results: List[Result]) -> []:
             ret.append(rubber)
     return ret
 
+
 def help_print():
     click.echo(cli.get_help(click.Context(cli)))
 
-def hands_to_json_file(f: io.FileIO, hands):
-    """write the hands array in json format to the file"""
-    json.dump([hand.to_json_dictionary() for hand in hands], f)
 
-def hands_from_json_file(f: io.FileIO) -> []:
-    """Load a jso file and return the array of hands"""
-    out = json.load(f)
-    return [Result.from_json_dictionary(**hand_json) for hand_json in out]
-
-def read_hands(hands_path):
-    with hands_path.open(mode="r") as f:
-        return hands_from_json_file(f)
-
-def bid_file(hands_path, hands, bid):
+def bid_and_store(results_storeage, hands, bid):
     if bid == None:
         score_print(hands)
         return
@@ -263,49 +273,77 @@ def bid_file(hands_path, hands, bid):
         else:
             help_print()
             return
-    with hands_path.open(mode="w") as f:
-        hands_to_json_file(f, hands)
+    results_storeage.store_results(hands)
     score_print(hands)
 
-def new_game_file(dir_str: str) -> pathlib.Path:
-    file_name = time.strftime("%Y-%m-%d-%H-%M-%S") + ".json"
-    directory = pathlib.Path(dir_str)
-    file = directory / file_name
-    if file.exists():
-        raise FileExistsError()
-    file.write_text("[]")
-    return file
-    
-def existing_game_file(dir_str: str) -> pathlib.Path:
-    directory = pathlib.Path(dir_str)
-    paths = list(directory.glob("*-*-*-*-*-*.json"))
-    if len(paths) == 0:
-        raise FileNotFoundError()
-    paths.sort()
-    return paths[-1]
 
-def run(directory, new_game, bid):
-    hands_path = None
-    if new_game:
-        hands_path = new_game_file(directory)
+def function_call_get_score(**kwargs):
+    result_storage = ResultsCOS(
+        kwargs["root"],
+        kwargs["api_key"],
+        kwargs["cos_instance_id"],
+        kwargs["cos_service_endpoint"],
+    )
+    hands = result_storage.existing_results()
+    return score_str(hands)
+
+
+def run(root, new_game, storage, api_key, instance_id, cos_service_endpoint, bid):
+    print(root, new_game, storage, api_key, instance_id, cos_service_endpoint, bid)
+    if storage == STORAGE_FILE:
+        result_storage = ResultsFile(root)
     else:
-        try:
-            hands_path = existing_game_file(directory)
-        except FileNotFoundError:
-            hands_path = new_game_file(directory)
+        result_storage = ResultsCOS(root, api_key, instance_id, cos_service_endpoint)
 
-    try:
-        hands = read_hands(hands_path)
-    except Exception:
-        hands = []
-    bid_file(hands_path, hands, bid)
+    if new_game:
+        hands = result_storage.new_results()
+    else:
+        hands = result_storage.existing_results()
+    bid_and_store(result_storage, hands, bid)
+
 
 # Command line calls cli
 @click.command()
-@click.option("-d", "--directory", default=".", help="directory to store hands")
-@click.option("-n", "--new-game", is_flag=True, help="start a new game, this will create a new file to store the hands")
+@click.option(
+    "-n",
+    "--new-game",
+    is_flag=True,
+    help="start a new game, this will create a new file to store the hands",
+)
+@click.option("--file", "storage", flag_value=STORAGE_FILE)
+@click.option("--cos", "storage", flag_value=STORAGE_COS, default=True)
+@click.option("-k", "--api-key", help="ibm cloud api key,  needed for COS")
+@click.option("-r", "--root", help="cos bucket or root directory")
+@click.option("--root-test", help="cos bucket or root test directory")
+@click.option("-i", "--cos-instance-id", help="ibm cloud instance id, needed for COS")
+@click.option("-e", "--cos-service_endpoint", help="COS service endpoint")
+@click.option(
+    "-p",
+    "--print-params",
+    is_flag=True,
+    default=False,
+    help="print parameters and exit, useful for testing",
+)
+@click.option(
+    "-f",
+    "--simulate-function",
+    is_flag=True,
+    default=False,
+    help="simulate the call that the cloud function makes",
+)
 @click.argument("bid", nargs=1, required=False)
-def cli(directory, new_game, bid):
+def click_cli(
+    root,
+    root_test,
+    new_game,
+    storage,
+    api_key,
+    cos_instance_id,
+    cos_service_endpoint,
+    bid,
+    print_params,
+    simulate_function,
+):
     """
     score a collection of bridge hands USAGE:
     bridgepy [options] [bid]
@@ -313,6 +351,35 @@ def cli(directory, new_game, bid):
     bid w3sm3; # we 3 spade made 3
     bid t2dd1; # they 2 diamond down 1
     """
-    run(directory, new_game, bid)
+    if print_params:
+        click.echo(
+            json.dumps(
+                {
+                    "root": root,
+                    "root_test": root_test,
+                    "new_game": new_game,
+                    "storage": storage,
+                    "api_key": api_key,
+                    "cos_instance_id": cos_instance_id,
+                    "cos_service_endpoint": cos_service_endpoint,
+                    "print_params": print_params,
+                    "simulate_function": simulate_function,
+                    "bid": bid,
+                }
+            )
+        )
+        return
+    if simulate_function:
+        function_call_get_score(**d)
+    else:
+        run(
+            root, new_game, storage, api_key, cos_instance_id, cos_service_endpoint, bid
+        )
 
-#run(".", True, "w1sm1")
+
+def cli():
+    click_cli(auto_envvar_prefix=ENV_PREFIX)
+
+
+if __name__ == "__main__":
+    cli()

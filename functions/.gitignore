@@ -1,0 +1,4 @@
+python.zip
+.terraform
+terraform.tfstate*
+local.env

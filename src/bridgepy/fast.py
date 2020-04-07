@@ -10,7 +10,16 @@ hands = []
 
 @app.get("/")
 async def index():
-    return Response(content=score())
+    #return Response(content=score())
+    return Response("""
+      We | They
+  50 |   0
+  30 |   0
+-------------
+  40 |   0
+-------------
+ 120 |   0
+ """)
 
 @app.get("/hand")
 async def new_hand():

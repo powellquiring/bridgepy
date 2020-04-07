@@ -1,13 +1,13 @@
 /**
  * Web application
  */
-const apiUrl = 'https://CHANGEME.us-south.apigw.appdomain.cloud/guestbook';
+const apiUrl = 'https://us-south.functions.cloud.ibm.com/api/v1/web/pquiring_dev/bridgepy/bridgepy';
 const guestbook = {
   // retrieve the existing guestbook entries
   get() {
     return $.ajax({
       type: 'GET',
-      url: `${apiUrl}/entries`,
+      url: `${apiUrl}/score`,
       dataType: 'json'
     });
   },
@@ -41,6 +41,11 @@ const guestbook = {
     console.log('Loading entries...');
     $('#entries').html('Loading entries...');
     guestbook.get().done(function(result) {
+      console.log(result);
+      if (result.message) {
+        $('#entries').html(result.message);
+        return
+      }
       if (!result.entries) {
         return;
       }
